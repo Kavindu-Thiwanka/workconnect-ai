@@ -29,26 +29,30 @@ class RecommendationResponse(BaseModel):
 @app.post("/recommendations/jobs", response_model=RecommendationResponse)
 def get_job_recommendations(request: RecommendationRequest):
     # 1. Create a list of all skill texts (documents)
-    # The first document is the worker's skills
-    documents = [request.worker_profile.skills]
+    documents = [request.worker_profile.skills or ""]
     job_ids = []
     for job in request.job_postings:
-        documents.append(job.required_skills)
+        documents.append(job.required_skills or "")
         job_ids.append(job.id)
 
-    # 2. Use TF-IDF to convert the text into numerical vectors
-    vectorizer = TfidfVectorizer(stop_words='english')
-    tfidf_matrix = vectorizer.fit_transform(documents)
+    # ** THE FIX: Check if there is anything to process **
+    # If there are no jobs or all documents are empty, return early.
+    if not any(documents) or len(documents) < 2:
+        return RecommendationResponse(ranked_job_ids=[])
 
-    # 3. Calculate cosine similarity between the worker's vector (the first one)
-    # and all the job vectors
+    # 2. Use TF-IDF to convert the text into numerical vectors
+    try:
+        vectorizer = TfidfVectorizer(stop_words='english')
+        tfidf_matrix = vectorizer.fit_transform(documents)
+    except ValueError:
+        # This handles the "empty vocabulary" error if all words are stop words
+        return RecommendationResponse(ranked_job_ids=[])
+
+    # 3. Calculate cosine similarity
     cosine_similarities = cosine_similarity(tfidf_matrix[0:1], tfidf_matrix[1:]).flatten()
 
-    # 4. Rank the jobs based on similarity score
-    # Create a list of (job_id, score) tuples
+    # 4. Rank the jobs
     ranked_jobs = sorted(zip(job_ids, cosine_similarities), key=lambda item: item[1], reverse=True)
-
-    # Extract just the IDs in their ranked order
     ranked_ids = [job_id for job_id, score in ranked_jobs if score > 0]
 
     return RecommendationResponse(ranked_job_ids=ranked_ids)
